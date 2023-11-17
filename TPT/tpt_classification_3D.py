@@ -164,14 +164,17 @@ def main_worker(gpu, args):
     results = {}
     for set_id in datasets:
         if args.tpt:
-            base_transform = transforms.Compose([
-                transforms.Resize(args.resolution, interpolation=BICUBIC),
-                transforms.CenterCrop(args.resolution)])
-            preprocess = transforms.Compose([
-                transforms.ToTensor(),
-                normalize])
-            data_transform = AugMixAugmenter(base_transform, preprocess, n_views=args.batch_size-1, 
-                                            augmix=len(set_id)>1)
+            # base_transform = transforms.Compose([
+            #     transforms.Resize(args.resolution, interpolation=BICUBIC),
+            #     transforms.CenterCrop(args.resolution)])
+            # preprocess = transforms.Compose([
+            #     transforms.ToTensor(),
+            #     normalize])
+            # data_transform = AugMixAugmenter(base_transform, preprocess, n_views=args.batch_size-1, 
+            #                                 augmix=len(set_id)>1)
+            data_transform = transforms.Compose([
+                normalize
+            ])
             batchsize = 1
         else:
             data_transform = transforms.Compose([
@@ -248,10 +251,13 @@ def test_time_adapt_eval(val_loader, model, model_state, optimizer, optim_state,
 
     pc_views = Realistic_Projection()
     get_img = pc_views.get_img
+    normalize = transforms.Normalize(mean=[0.48145466, 0.4578275, 0.40821073],
+                                     std=[0.26862954, 0.26130258, 0.27577711])
     @torch.no_grad()
-    def real_proj(pc, imsize=224):
+    def real_proj(pc, normalize, imsize=224):
         img = get_img(pc).cuda()
         img = torch.nn.functional.interpolate(img, size=(imsize, imsize), mode='bilinear', align_corners=True)
+        # img = normalize(img)
         return img
 
     # reset model and switch to evaluate mode
@@ -262,10 +268,8 @@ def test_time_adapt_eval(val_loader, model, model_state, optimizer, optim_state,
     end = time.time()
     for i, (images, target) in enumerate(val_loader):
         assert args.gpu is not None
-        b = images.size()[0]
-        images = real_proj(images.cuda(args.gpu, non_blocking=True))
-        target = target.cuda(args.gpu, non_blocking=True)
-        # target = target.unsqueeze(-1).expand(4, 10).flatten()
+        images = real_proj(images.cuda(args.gpu, non_blocking=True), normalize)
+        target = target.cuda(args.gpu, non_blocking=True).unsqueeze(0)
         
         # reset the tunable prompt to its initial state
         if not args.cocoop: # no need to reset cocoop because it's fixed
@@ -294,11 +298,11 @@ def test_time_adapt_eval(val_loader, model, model_state, optimizer, optim_state,
                 else:
                     output = model(images)
         # measure accuracy and record loss
-        output = output.view(b, -1, 40).mean(dim=1)
+        output = output.mean(dim=0, keepdim=True)
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
                 
-        top1.update(acc1[0], b)
-        top5.update(acc5[0], b)
+        top1.update(acc1[0])
+        top5.update(acc5[0])
 
         # measure elapsed time
         batch_time.update(time.time() - end)
