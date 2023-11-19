@@ -26,11 +26,13 @@ class ModelNet40(Dataset):
         classnames = self.read_classnames(text_file)
         
         if mode == 'train':
-            data, label = self.load_data(os.path.join(self.dataset_dir, 'train_files.txt'))
+            data, label, id = self.load_data(os.path.join(self.dataset_dir, 'train_files.txt'))
             self.data = self.read_data(classnames, data, label)
+            self.ids = id
         elif mode == 'test':
-            data, label = self.load_data(os.path.join(self.dataset_dir, 'test_files.txt'))
+            data, label, id = self.load_data(os.path.join(self.dataset_dir, 'test_files.txt'))
             self.data = self.read_data(classnames, data, label)
+            self.ids = id
         
     def read_data(self, classnames, datas, labels):
         items = []
@@ -45,6 +47,7 @@ class ModelNet40(Dataset):
     def load_data(self, data_path):
         all_data = []
         all_label = []
+        all_id = []
         with open(data_path, "r") as f:
             for h5_name in f.readlines():
                 f = h5py.File(os.path.join(self.dataset_dir, h5_name.strip().split('/')[-1]), 'r')
@@ -53,12 +56,16 @@ class ModelNet40(Dataset):
                 f.close()
                 # sampled_idx = np.random.randint(data.shape[1], size=1024)
                 # all_data.append(data[:, sampled_idx, :])
+                id = json.load(open(os.path.join(
+                    self.dataset_dir, 
+                    h5_name.strip().split('/')[-1].split('.')[0] + '_id2file.json')))
                 all_data.append(data)
                 all_label.append(label)
+                all_id += id
         all_data = np.concatenate(all_data, axis=0)
         all_label = np.concatenate(all_label, axis=0)
         
-        return all_data, all_label
+        return all_data, all_label, all_id
     
     def read_classnames(self, text_file):
         """Return a dictionary containing
@@ -76,4 +83,4 @@ class ModelNet40(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        return self.data[idx]
+        return self.data[idx], self.ids[idx]

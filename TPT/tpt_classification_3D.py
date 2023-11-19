@@ -88,6 +88,7 @@ def test_time_tuning(model, inputs, optimizer, scaler, args):
 def main():
     args = parser.parse_args()
     set_random_seed(args.seed)
+    print(args)
 
     # This codebase has only been tested under the single GPU setting
     assert args.gpu is not None
@@ -223,19 +224,18 @@ def main_worker(gpu, args):
         results[set_id] = test_time_adapt_eval(val_loader, model, model_state, optimizer, optim_state, scaler, args)
         del val_dataset, val_loader
         try:
-            print("=> Acc. on testset [{}]: @1 {}/ @5 {}".format(set_id, results[set_id][0], results[set_id][1]))
+            print("=> Acc. on testset [{}]: @1 {}/ @5 {}".format(set_id, results[set_id]['top1_acc'], results[set_id]['top5_acc']))
+            with open(args.output_filepath, 'w') as result_file:
+                json.dump(results[set_id], result_file, indent=4)
         except:
             print("=> Acc. on testset [{}]: {}".format(set_id, results[set_id]))
 
     print("======== Result Summary ========")
     print("params: nstep	lr	bs")
     print("params: {}	{}	{}".format(args.tta_steps, args.lr, args.batch_size))
-    print("\t\t [set_id] \t\t Top-1 acc. \t\t Top-5 acc.")
+    print("acc   : top1_acc	top5_acc")
     for id in results.keys():
-        print("{}".format(id), end="	")
-    print("\n")
-    for id in results.keys():
-        print("{:.2f}".format(results[id][0]), end="	")
+        print("acc   : {:.2f}	{:.2f}".format(results[id]['top1_acc'], results[id]['top5_acc']))
     print("\n")
 
 
@@ -266,7 +266,14 @@ def test_time_adapt_eval(val_loader, model, model_state, optimizer, optim_state,
         with torch.no_grad():
             model.reset()
     end = time.time()
-    for i, (images, target) in enumerate(val_loader):
+
+    results = {
+        'top1_acc' : 0,
+        'top5_acc' : 0,
+        'predictions' : [],
+    }
+    for i, ((images, target), id) in enumerate(val_loader):
+        if i > 5: break
         assert args.gpu is not None
         images = real_proj(images.cuda(args.gpu, non_blocking=True), normalize)
         target = target.cuda(args.gpu, non_blocking=True).unsqueeze(0)
@@ -298,11 +305,17 @@ def test_time_adapt_eval(val_loader, model, model_state, optimizer, optim_state,
                 else:
                     output = model(images)
         # measure accuracy and record loss
+        prediction = {
+            'img_id' : id[0],
+            'target' : target[0][0].detach().cpu().numpy().tolist(),
+            'pred_logits' : output.detach().cpu().numpy().tolist()
+            }
         output = output.mean(dim=0, keepdim=True)
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
                 
         top1.update(acc1[0])
         top5.update(acc5[0])
+        results['predictions'].append(prediction)
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -312,8 +325,10 @@ def test_time_adapt_eval(val_loader, model, model_state, optimizer, optim_state,
             progress.display(i)
 
     progress.display_summary()
+    results['top1_acc'] = top1.avg.item()
+    results['top5_acc'] = top5.avg.item()
 
-    return [top1.avg, top5.avg]
+    return results
 
 
 if __name__ == '__main__':
@@ -340,5 +355,6 @@ if __name__ == '__main__':
     parser.add_argument('--cocoop', action='store_true', default=False, help="use cocoop's output as prompt initialization")
     parser.add_argument('--load', default=None, type=str, help='path to a pre-trained coop/cocoop')
     parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--output_filepath', type=str, default='/hub_data3/byungoh/TPT/outputs/debug.json')
 
     main()
